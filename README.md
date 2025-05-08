@@ -70,3 +70,112 @@ The chatbot includes a **Graphical User Interface (GUI)** built with **PyQt5**, 
 - **GUI Development**: **PyQt5** ensures ease of use and a professional interface.
 - **Environment**: Built locally to provide quick access and ensure user **privacy** during conversations.
 
+## Project Structure
+
+```
+medical-chatbot/
+├── src/
+│   ├── main.py              # Application entry point
+│   ├── chatbot/
+│   │   └── core.py         # Core chatbot functionality
+│   ├── gui/
+│   │   └── main_window.py  # GUI implementation
+│   └── database/
+│       └── mongodb.py      # Database operations
+├── config/
+│   └── settings.py         # Configuration settings
+└── requirements/
+    ├── base.txt           # Core dependencies
+    └── dev.txt            # Development dependencies
+```
+
+## Prerequisites
+
+- Python 3.8 or higher
+- MongoDB
+- Virtual environment (recommended)
+
+## Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/AliNikoo73/Medical-Chatbot.git
+   cd Medical-Chatbot
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements/base.txt
+   ```
+
+4. Start MongoDB:
+   ```bash
+   # On macOS with Homebrew:
+   brew services start mongodb-community
+   ```
+
+## Running the Application
+
+1. Ensure MongoDB is running
+2. Run the application:
+   ```bash
+   PYTHONPATH=$PYTHONPATH:. python src/main.py
+   ```
+
+## Usage
+
+1. Launch the application
+2. Choose a conversation mode:
+   - "I am not feeling good!!" for symptom analysis
+   - "I need a doctor right away" for emergency help
+   - "I want to ask questions about my disease" for general questions
+3. Type your message in the input field
+4. Press Enter or click Send to interact with the chatbot
+
+## Features in Detail
+
+### Symptom Analysis
+- Interactive questioning about symptoms
+- Follow-up questions based on responses
+- Medical recommendations based on symptoms
+
+### Emergency Assistance
+- Quick access to emergency resources
+- Maps integration for nearby clinics
+- Emergency guidance
+
+### General Medical Questions
+- AI-powered responses using GPT-2
+- Context-aware conversations
+- Medical information retrieval
+
+### Data Storage
+- MongoDB integration for conversation history
+- Secure storage of medical interactions
+- Easy retrieval of past conversations
+
+## Development
+
+For development setup, install additional dependencies:
+```bash
+pip install -r requirements/dev.txt
+```
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
