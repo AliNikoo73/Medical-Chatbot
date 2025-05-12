@@ -62,24 +62,53 @@ class MessageWidget(QFrame):
         self.setFrameShadow(QFrame.Raised)
         self.setLineWidth(1)
         
-        # Set background color based on sender
-        palette = self.palette()
+        # Set background color and styling
         if self.is_user:
-            palette.setColor(QPalette.Window, QColor(GUI_CONFIG.get("user_message_color", "#E2F0FF")))
+            bg_color = GUI_CONFIG.get("user_message_color", "#D4E6F9")
+            text_color = GUI_CONFIG.get("user_text_color", "#000000")
+            align = Qt.AlignRight
+            margin = "margin-left: 50px;"
         else:
-            palette.setColor(QPalette.Window, QColor(GUI_CONFIG.get("bot_message_color", "#F0F0F0")))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+            bg_color = GUI_CONFIG.get("bot_message_color", "#E0E0E0")
+            text_color = GUI_CONFIG.get("bot_text_color", "#000000")
+            align = Qt.AlignLeft
+            margin = "margin-right: 50px;"
+        
+        self.setStyleSheet(f"""
+            MessageWidget {{
+                background-color: {bg_color};
+                border-radius: 8px;
+                {margin}
+                padding: 10px;
+            }}
+        """)
         
         # Create layout
         layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)
         
-        # Sender label
+        # Sender label with icon
+        sender_layout = QHBoxLayout()
+        sender_layout.setAlignment(align)
+        
+        icon_label = QLabel("👤" if self.is_user else "🤖")
+        icon_label.setStyleSheet(f"color: {text_color};")
+        
         sender_label = QLabel(f"<b>{self.sender}</b>")
         sender_font = sender_label.font()
         sender_font.setPointSize(GUI_CONFIG.get("font_size", 12))
         sender_label.setFont(sender_font)
-        layout.addWidget(sender_label)
+        sender_label.setStyleSheet(f"color: {text_color};")
+        
+        if self.is_user:
+            sender_layout.addWidget(sender_label)
+            sender_layout.addWidget(icon_label)
+        else:
+            sender_layout.addWidget(icon_label)
+            sender_layout.addWidget(sender_label)
+        
+        layout.addLayout(sender_layout)
         
         # Message label
         message_label = QLabel(self.message)
@@ -88,9 +117,35 @@ class MessageWidget(QFrame):
         message_font = message_label.font()
         message_font.setPointSize(GUI_CONFIG.get("font_size", 12) - 1)
         message_label.setFont(message_font)
+        message_label.setStyleSheet(f"color: {text_color};")
+        message_label.setAlignment(align)
         layout.addWidget(message_label)
         
+        # Add timestamp
+        timestamp = QLabel(datetime.now().strftime("%I:%M %p"))
+        timestamp.setStyleSheet(f"color: {self._adjust_color(text_color, 100)}; font-size: {GUI_CONFIG.get('font_size', 12) - 2}px;")
+        timestamp.setAlignment(align)
+        layout.addWidget(timestamp)
+        
         self.setLayout(layout)
+    
+    def _adjust_color(self, color: str, amount: int) -> str:
+        """Adjust a hex color by the given amount."""
+        if not color.startswith('#'):
+            return color
+        
+        # Convert to RGB
+        color = color.lstrip('#')
+        r = int(color[:2], 16) + amount
+        g = int(color[2:4], 16) + amount
+        b = int(color[4:], 16) + amount
+        
+        # Clamp values
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        
+        return f"#{r:02x}{g:02x}{b:02x}"
 
 class ChatLogWidget(QScrollArea):
     """Widget for displaying the chat log."""
@@ -218,7 +273,7 @@ class ChatbotGUI(QMainWindow):
                 background-color: white;
             }}
             QPushButton {{
-                background-color: {GUI_CONFIG.get("primary_color", "#4A90E2")};
+                background-color: {GUI_CONFIG.get("primary_color", "#2A70B8")};
                 color: white;
                 border: none;
                 padding: 8px 16px;
@@ -235,12 +290,16 @@ class ChatbotGUI(QMainWindow):
                 border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 8px;
-                selection-background-color: {GUI_CONFIG.get("primary_color", "#4A90E2")};
+                color: {GUI_CONFIG.get("input_text_color", "#000000")};
+                background-color: white;
+                selection-background-color: {GUI_CONFIG.get("primary_color", "#2A70B8")};
             }}
             QTextEdit {{
                 border: 1px solid #CCCCCC;
                 border-radius: 4px;
-                selection-background-color: {GUI_CONFIG.get("primary_color", "#4A90E2")};
+                color: {GUI_CONFIG.get("input_text_color", "#000000")};
+                background-color: white;
+                selection-background-color: {GUI_CONFIG.get("primary_color", "#2A70B8")};
             }}
         """)
         
@@ -269,63 +328,112 @@ class ChatbotGUI(QMainWindow):
         
         # Provider selection
         header_layout.addStretch()
-        self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["GPT-2", "Claude", "Gemma", "Mistral (Ollama)"])
-        self.provider_combo.setToolTip("Select the AI provider to use for responses")
-        # Default to current provider
-        if hasattr(self.chatbot, 'llm_provider') and self.chatbot.llm_provider:
-            provider_name = self.chatbot.llm_provider.get_name()
-            if "claude" in provider_name.lower():
-                self.provider_combo.setCurrentIndex(1)
-            elif "gemma" in provider_name.lower() or "gemini" in provider_name.lower():
-                self.provider_combo.setCurrentIndex(2)
-            elif "mistral" in provider_name.lower() or "ollama" in provider_name.lower():
-                self.provider_combo.setCurrentIndex(3)
-            else:
-                self.provider_combo.setCurrentIndex(0)
-        else:
-            self.provider_combo.setCurrentIndex(0)
-        
-        # Disable changing for now until we implement dynamic switching
-        self.provider_combo.setEnabled(False)
-        self.provider_combo.setToolTip("Provider switching will be available in a future update")
-            
-        header_layout.addWidget(QLabel("Provider:"))
-        header_layout.addWidget(self.provider_combo)
+        provider_label = QLabel("AI Model: Mistral")
+        provider_label.setStyleSheet(f"color: {GUI_CONFIG.get('primary_color')}; font-weight: bold;")
+        header_layout.addWidget(provider_label)
         
         main_layout.addLayout(header_layout)
         
         # Mode buttons
         mode_layout = QHBoxLayout()
-        for label, handler, color, icon in [
-            ("I am not feeling good!!", self.handle_symptoms, GUI_CONFIG.get("primary_color", "#4A90E2"), "🤒"),
-            ("I need a doctor right away", self.handle_emergency, GUI_CONFIG.get("accent_color", "#FF5252"), "🚑"),
-            ("I want to ask questions about my disease", self.handle_general_questions, "#4CAF50", "❓"),
-        ]:
+        mode_buttons = [
+            ("I am not feeling good!!", self.handle_symptoms, GUI_CONFIG.get("primary_color", "#2A70B8"), "🤒",
+             "Describe your symptoms for personalized health guidance"),
+            ("I need a doctor right away", self.handle_emergency, GUI_CONFIG.get("accent_color", "#D32F2F"), "🚑",
+             "Get immediate guidance for urgent medical situations"),
+            ("I want to ask questions about my disease", self.handle_general_questions, "#4CAF50", "❓",
+             "Ask general medical questions and get evidence-based information")
+        ]
+        
+        for label, handler, color, icon, tooltip in mode_buttons:
             button = QPushButton(f"{icon} {label}")
             button.clicked.connect(handler)
-            button.setStyleSheet(f"background-color: {color};")
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {color};
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {self._adjust_color(color, -20)};
+                }}
+            """)
+            button.setToolTip(tooltip)
             mode_layout.addWidget(button)
+            
         main_layout.addLayout(mode_layout)
         
-        # Chat area
-        self.chat_log = ChatLogWidget()
-        main_layout.addWidget(self.chat_log, 1)  # 1 = stretch factor
+        # Chat area with improved styling
+        chat_container = QWidget()
+        chat_container.setObjectName("chatContainer")
+        chat_container.setStyleSheet(f"""
+            QWidget#chatContainer {{
+                background-color: {GUI_CONFIG.get('chat_background')};
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+            }}
+        """)
+        chat_layout = QVBoxLayout(chat_container)
         
-        # Input area
-        input_layout = QHBoxLayout()
+        self.chat_log = ChatLogWidget()
+        chat_layout.addWidget(self.chat_log)
+        
+        main_layout.addWidget(chat_container, 1)  # 1 = stretch factor
+        
+        # Input area with improved styling
+        input_container = QWidget()
+        input_container.setObjectName("inputContainer")
+        input_container.setStyleSheet("""
+            QWidget#inputContainer {
+                background-color: white;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        input_layout = QHBoxLayout(input_container)
+        input_layout.setContentsMargins(10, 10, 10, 10)
         
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("Type your message here...")
+        self.user_input.setStyleSheet(f"""
+            QLineEdit {{
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: {GUI_CONFIG.get('font_size')}px;
+                color: {GUI_CONFIG.get('input_text_color')};
+                background-color: white;
+            }}
+            QLineEdit:focus {{
+                border-color: {GUI_CONFIG.get('primary_color')};
+            }}
+        """)
         self.user_input.returnPressed.connect(self.send_message)
-        input_layout.addWidget(self.user_input, 1)  # 1 = stretch factor
+        input_layout.addWidget(self.user_input, 1)
         
         self.send_button = QPushButton("Send")
         self.send_button.clicked.connect(self.send_message)
         self.send_button.setIcon(QIcon.fromTheme("arrow-right"))
+        self.send_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {GUI_CONFIG.get('primary_color')};
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self._adjust_color(GUI_CONFIG.get('primary_color'), -20)};
+            }}
+        """)
         input_layout.addWidget(self.send_button)
         
-        main_layout.addLayout(input_layout)
+        main_layout.addWidget(input_container)
         
         # Status bar
         self.status_bar = StatusBarWidget()
@@ -370,17 +478,20 @@ class ChatbotGUI(QMainWindow):
         about_action.triggered.connect(self.show_about_dialog)
         help_menu.addAction(about_action)
 
-    def update_status_bar(self):
+    def update_status_bar(self) -> None:
         """Update the status bar with current information."""
         # Update model info
         if hasattr(self.chatbot, 'llm_provider') and self.chatbot.llm_provider:
-            self.status_bar.set_model_info(self.chatbot.llm_provider.get_name())
+            model_name = self.chatbot.llm_provider.get_name()
+            self.status_bar.set_model_info(model_name)
+        elif hasattr(self.chatbot, 'config') and self.chatbot.config.llm_provider == "gpt2":
+            self.status_bar.set_model_info("GPT-2 (Legacy)")
         else:
-            self.status_bar.set_model_info("GPT-2")
+            self.status_bar.set_model_info("Unknown")
         
-        # Update MongoDB connection status
-        mongodb_connected = hasattr(self.chatbot, 'collection') and self.chatbot.collection is not None
-        self.status_bar.set_connection_status(mongodb_connected)
+        # Update connection status
+        db_connected = hasattr(self.chatbot, 'collection') and self.chatbot.collection is not None
+        self.status_bar.set_connection_status(db_connected)
 
     def add_to_chat_log(self, sender: str, message: str) -> None:
         """Add a message to the chat log.
@@ -497,4 +608,22 @@ class ChatbotGUI(QMainWindow):
             "- General medical questions\n\n"
             f"Version: 1.0.0\n"
             f"Using: {self.status_bar.model_info.text()}"
-        ) 
+        )
+
+    def _adjust_color(self, color: str, amount: int) -> str:
+        """Adjust a hex color by the given amount."""
+        if not color.startswith('#'):
+            return color
+        
+        # Convert to RGB
+        color = color.lstrip('#')
+        r = int(color[:2], 16) + amount
+        g = int(color[2:4], 16) + amount
+        b = int(color[4:], 16) + amount
+        
+        # Clamp values
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        
+        return f"#{r:02x}{g:02x}{b:02x}" 

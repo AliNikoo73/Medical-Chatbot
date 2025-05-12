@@ -87,11 +87,31 @@ class LocalChatbot:
                 if self.config.llm_provider == "ollama" and self.config.llm_host:
                     provider_kwargs["host"] = self.config.llm_host
                 
-                self.llm_provider = LLMFactory.create_provider(
-                    self.config.llm_provider, 
-                    **provider_kwargs
-                )
-                logger.info(f"Using {self.llm_provider.get_name()} for responses")
+                try:
+                    self.llm_provider = LLMFactory.create_provider(
+                        self.config.llm_provider, 
+                        **provider_kwargs
+                    )
+                    logger.info(f"Using {self.llm_provider.get_name()} for responses")
+                except ValueError as e:
+                    # If API key is missing and provider is Claude or Gemma, try Ollama as fallback
+                    if "API key is required" in str(e) and self.config.llm_provider in ["claude", "gemma"]:
+                        logger.warning(f"Missing API key for {self.config.llm_provider}, trying Ollama instead")
+                        self.config.llm_provider = "ollama"
+                        self.config.llm_model_name = "mistral"
+                        provider_kwargs = {
+                            "model": self.config.llm_model_name,
+                            "host": self.config.llm_host or "http://localhost:11434"
+                        }
+                        self.llm_provider = LLMFactory.create_provider(
+                            self.config.llm_provider, 
+                            **provider_kwargs
+                        )
+                        logger.info(f"Using {self.llm_provider.get_name()} for responses")
+                    else:
+                        # Re-raise if it's not an API key issue or Ollama is not available
+                        raise
+                        
         except Exception as e:
             logger.error(f"Error initializing LLM: {e}")
             # Fallback to GPT-2 if provider initialization fails
@@ -114,7 +134,7 @@ class LocalChatbot:
             self.collection = None
 
     def extract_intents_and_entities(self, text: str) -> List[str]:
-        """Extract medical keywords from the input text.
+        """Extract medical keywords and intents from the input text.
 
         Args:
             text: Input text to analyze.
@@ -122,13 +142,35 @@ class LocalChatbot:
         Returns:
             List of medical keywords found in the text.
         """
+        # Enhanced list of medical keywords and conditions
         medical_keywords = [
-            'headache', 'fever', 'pain', 'cough', 'diabetes', 'asthma', 'flu', 'allergy',
-            'fatigue', 'dizziness', 'nausea', 'hypertension', 'cholesterol', 'cancer',
-            'tumor', 'infection', 'virus', 'seizure', 'arthritis', 'depression', 'anxiety',
-            'migraine', 'stroke', 'heart attack'
+            # Symptoms
+            'headache', 'fever', 'pain', 'cough', 'fatigue', 'dizziness', 'nausea',
+            'vomiting', 'diarrhea', 'constipation', 'rash', 'swelling', 'bleeding',
+            'bruising', 'numbness', 'tingling', 'weakness', 'stiffness', 'tremor',
+            
+            # Conditions
+            'diabetes', 'asthma', 'hypertension', 'arthritis', 'depression', 'anxiety',
+            'migraine', 'insomnia', 'allergies', 'infection', 'inflammation',
+            'cancer', 'tumor', 'stroke', 'heart attack', 'seizure',
+            
+            # Body parts
+            'head', 'chest', 'stomach', 'back', 'neck', 'throat', 'joints',
+            'muscles', 'skin', 'eyes', 'ears', 'nose', 'mouth', 'teeth',
+            
+            # Qualifiers
+            'severe', 'chronic', 'acute', 'persistent', 'recurring', 'intermittent',
+            'mild', 'moderate', 'intense', 'sharp', 'dull', 'throbbing'
         ]
-        return [word for word in medical_keywords if re.search(rf'\b{word}\b', text, re.IGNORECASE)]
+        
+        # Find all matches (case-insensitive)
+        matches = []
+        text_lower = text.lower()
+        for keyword in medical_keywords:
+            if re.search(rf'\b{keyword}\b', text_lower):
+                matches.append(keyword)
+        
+        return matches
 
     def handle_medical_conversation(self, user_text: str) -> str:
         """Handle medical conversation based on user input.
@@ -142,33 +184,21 @@ class LocalChatbot:
         # Add user message to conversation history
         self.context.conversation_history.append({"role": "user", "content": user_text})
         
-        # Extract symptoms if any
+        # Extract medical entities and update context
         if entities := self.extract_intents_and_entities(user_text):
-            new_symptom = entities[0]
-            if new_symptom not in self.context.symptoms:
-                self.context.symptoms.append(new_symptom)
-                self.context.responses[new_symptom] = []
-                self.context.question_index[new_symptom] = 0
-                self.save_conversation(new_symptom, "start", "New symptom conversation started.")
-            response = self.ask_question(new_symptom)
-        else:
-            # Check for existing symptom conversation
-            for symptom in self.context.symptoms:
-                if self.context.question_index[symptom] >= len(self.get_symptom_questions(symptom)):
-                    response = self.provide_recommendation(symptom)
-                    break
-                else:
-                    self.context.responses[symptom].append(user_text)
-                    self.save_conversation(symptom, "user", user_text)
-                    self.context.question_index[symptom] += 1
-                    response = self.ask_question(symptom)
-                    break
-            else:
-                # No symptom found, use LLM for general response
-                response = self.generate_response(user_text)
+            for entity in entities:
+                if entity not in self.context.symptoms:
+                    self.context.symptoms.append(entity)
+                    self.context.responses[entity] = []
+                self.context.responses[entity].append(user_text)
+                self.save_conversation(entity, "user", user_text)
         
-        # Add bot response to conversation history
-        self.context.conversation_history.append({"role": "assistant", "content": response})
+        # Generate response using the enhanced context
+        response = self.generate_response(user_text)
+        
+        # Save the conversation
+        for symptom in self.context.symptoms:
+            self.save_conversation(symptom, "bot", response)
         
         return response
 
@@ -268,33 +298,108 @@ and what home care measures might help. Keep it concise and informative.
             Generated response text.
         """
         try:
-            # Use LLM provider if available
-            if self.llm_provider:
-                # Format prompt with context
-                if self.chat_mode and self.config.system_prompts and self.chat_mode in self.config.system_prompts:
-                    system_prompt = self.config.system_prompts[self.chat_mode]
-                    context_prompt = f"{system_prompt}\n\nUser question: {prompt}"
-                else:
-                    context_prompt = f"Answer this medical question in a helpful way: {prompt}"
-                
-                return self.llm_provider.generate_response(context_prompt, **kwargs)
+            # Format prompt with context and conversation history
+            context_prompt = self._build_context_prompt(prompt)
             
-            # Fallback to legacy GPT-2 model
-            max_length = kwargs.get("max_length", 100)
-            input_ids = self.tokenizer.encode(prompt, return_tensors='pt')
-            output = self.model.generate(
-                input_ids,
-                max_length=max_length,
-                do_sample=True,
-                top_k=kwargs.get("top_k", 50),
-                top_p=kwargs.get("top_p", 0.95),
-                temperature=kwargs.get("temperature", 0.7),
-                pad_token_id=self.tokenizer.pad_token_id
-            )
-            return self.tokenizer.decode(output[0], skip_special_tokens=True)
+            # Generate response using Ollama
+            if self.llm_provider:
+                response = self.llm_provider.generate_response(context_prompt, **kwargs)
+                
+                # Post-process response
+                response = self._post_process_response(response)
+                
+                # Save to conversation history
+                self.context.conversation_history.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                
+                return response
+            else:
+                return "I apologize, but I'm currently unable to process requests. Please try again later."
+            
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            return "I'm sorry, I encountered an error generating a response. Please try again."
+            return "I apologize, but I encountered an error processing your request. Please try again."
+
+    def _build_context_prompt(self, user_input: str) -> str:
+        """Build a context-aware prompt for the model.
+        
+        Args:
+            user_input: The user's input text.
+            
+        Returns:
+            A formatted prompt string.
+        """
+        # Get appropriate system prompt based on chat mode
+        if self.chat_mode and self.config.system_prompts:
+            system_prompt = self.config.system_prompts.get(self.chat_mode, "")
+        else:
+            system_prompt = self.config.system_prompts.get("general", "")
+        
+        # Build conversation history
+        conversation = ""
+        if self.context.conversation_history:
+            # Include up to last 10 exchanges for context
+            recent_history = self.context.conversation_history[-10:]
+            for msg in recent_history:
+                role = "Patient" if msg["role"] == "user" else "Assistant"
+                conversation += f"{role}: {msg['content']}\n\n"  # Added extra newline for clarity
+        
+        # Add current symptoms context if available
+        symptoms_context = ""
+        if self.context.symptoms:
+            symptoms_context = "\nCurrent Health Context:\n"
+            for symptom in self.context.symptoms:
+                responses = self.context.responses.get(symptom, [])
+                if responses:
+                    # Format the symptom information more naturally
+                    symptoms_context += f"- Patient reported {symptom}: {' | '.join(responses)}\n"
+        
+        # Add any relevant medical keywords found in the current message
+        current_keywords = self.extract_intents_and_entities(user_input)
+        if current_keywords:
+            symptoms_context += "\nNew symptoms/conditions mentioned: " + ", ".join(current_keywords)
+        
+        # Combine all elements with improved formatting
+        full_prompt = f"""{system_prompt}
+
+CONVERSATION HISTORY:
+{conversation}
+
+{symptoms_context}
+
+Current Patient Message: {user_input}
+
+Instructions:
+1. Analyze the patient's message and medical context
+2. If clarification is needed, ask specific follow-up questions
+3. Provide a detailed, evidence-based response
+4. Include relevant medical information and explanations
+5. Suggest appropriate next steps or recommendations
+6. Add appropriate medical disclaimers
+
+Respond in a natural, conversational manner while maintaining medical professionalism."""
+
+        return full_prompt
+
+    def _post_process_response(self, response: str) -> str:
+        """Post-process the model's response.
+        
+        Args:
+            response: The raw response from the model.
+            
+        Returns:
+            Processed response string.
+        """
+        # Ensure response has appropriate disclaimer
+        if self.chat_mode == "emergency":
+            if "EMERGENCY WARNING:" not in response:
+                response += "\n\nEMERGENCY WARNING: If you are experiencing a medical emergency, immediately call your local emergency services (911 in the US) or go to the nearest emergency room. This AI system is not a substitute for emergency medical care."
+        elif "Note: This information is for educational purposes only" not in response:
+            response += "\n\nNote: This information is for educational purposes only and not a substitute for professional medical advice. Please consult a healthcare provider for diagnosis and treatment."
+        
+        return response
 
     def save_conversation(self, symptom: str, role: str, message: str) -> None:
         """Save conversation to the database.

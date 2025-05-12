@@ -25,11 +25,11 @@ def main() -> None:
     app = QApplication(sys.argv)
     
     # Use environment variables if available, otherwise use settings
-    llm_provider = os.getenv("LLM_PROVIDER", LLM_CONFIG.get("provider", "gpt2"))
+    llm_provider = os.getenv("LLM_PROVIDER", LLM_CONFIG.get("provider", "ollama"))
     
     # Get model configurations based on provider
     model_settings = LLM_CONFIG.get("models", {}).get(llm_provider, {})
-    model_name = model_settings.get("model_name", MODEL_CONFIG.get("model_name", "gpt2"))
+    model_name = model_settings.get("model_name", "mistral")  # Default to mistral
     
     # Log LLM provider info
     logger.info(f"Using LLM provider: {llm_provider}, model: {model_name}")
